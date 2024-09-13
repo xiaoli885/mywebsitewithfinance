@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>订单匹配结果</title>
+    <style>
+        /* 全局样式 */
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f0f8ff;
+            color: #333;
+            margin: 0;
+            padding: 0;
+        }
+        .container {
+            display: flex;
+            margin: 50px;
+        }
+        .sidebar {
+            width: 300px;
+            background-color: #007BFF;
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            margin-right: 20px;
+        }
+        .sidebar h2 {
+            color: white;
+        }
+        .main-content {
+            flex: 1;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        h1 {
+            color: #007BFF;
+            font-size: 2rem;
+        }
+        .filter-container {
+            margin-bottom: 20px;
+        }
+        .filter-container label {
+            margin-right: 10px;
+        }
+        .filter-container select, 
+        .filter-container input {
+            margin-right: 15px;
+            padding: 5px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        .table-section {
+            background-color: #fff;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .table-section h2 {
+            font-size: 1.5rem;
+            color: #0056b3;
+            margin-bottom: 10px;
+        }
+        .order-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 20px;
+        }
+        .order-table th, .order-table td {
+            padding: 12px;
+            border: 1px solid #ddd;
+            text-align: left;
+        }
+        .order-table th {
+            background-color: #007BFF;
+            color: white;
+        }
+        .order-table tr:nth-child(even) {
+            background-color: #f2f2f2;
+        }
+        .status-duplicate {
+            background-color: #e2e3e5; /* 灰色 */
+        }
+        .status-matched {
+            background-color: #d4edda; /* 绿色 */
+        }
+        .status-unmatched {
+            background-color: #f8d7da; /* 红色 */
+        }
+        .download-button {
+            display: block;
+            width: 200px;
+            margin: 20px auto;
+            padding: 10px;
+            background-color: #007BFF;
+            color: white;
+            text-align: center;
+            text-decoration: none;
+            border-radius: 5px;
+        }
+        .download-button:hover {
+            background-color: #0056b3;
+        }
+        .order-row {
+            display: flex;
+            justify-content: space-between;
+        }
+        .order-table-container {
+            flex: 1;
+            min-width: 300px;
+            margin: 0 10px;
+        }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+    <script>
+        let orderData = [];
+        let backendOrders = [
+            { orderNumber: '1001', amount: 500 },
+            { orderNumber: '1002', amount: 200 }
+        ];
+
+        function handleFile(event) {
+            const file = event.target.files[0];
+            const reader = new FileReader();
+            
+            reader.onload = function(e) {
+                try {
+                    const data = new Uint8Array(e.target.result);
+                    const workbook = XLSX.read(data, { type: 'array' });
+                    
+                    const sheetName = workbook.SheetNames[0];
+                    const sheet = workbook.Sheets[sheetName];
+                    
+                    orderData = XLSX.utils.sheet_to_json(sheet);
+                    matchOrders(orderData);
+                } catch (error) {
+                    alert("文件解析失败，请检查文件格式！");
+                    console.error("Error parsing the file: ", error);
+                }
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        function matchOrders(data) {
+            const noFeeTable = document.getElementById('noFeeTable');
+            const withFeeTable = document.getElementById('withFeeTable');
+            const duplicatesTable = document.getElementById('duplicatesTable');
+            const noFeeSummary = document.getElementById('noFeeSummary');
+            const withFeeSummary = document.getElementById('withFeeSummary');
+            const duplicatesSummary = document.getElementById('duplicatesSummary');
+
+            noFeeTable.innerHTML = '';
+            withFeeTable.innerHTML = '';
+            duplicatesTable.innerHTML = '';
+            noFeeSummary.innerHTML = '';
+            withFeeSummary.innerHTML = '';
+            duplicatesSummary.innerHTML = '';
+
+            if (data.length === 0) {
+                alert("没有数据，可能Excel文件为空或格式不正确！");
+                return;
+            }
+
+            const headerNoFee = noFeeTable.insertRow();
+            headerNoFee.innerHTML = '<th>订单号</th><th>金额</th>';
+
+            const headerWithFee = withFeeTable.insertRow();
+            headerWithFee.innerHTML = '<th>订单号</th><th>金额</th><th>手续费</th>';
+
+            const duplicatesHeader = duplicatesTable.insertRow();
+            duplicatesHeader.innerHTML = '<th>订单号</th><th>金额</th><th>手续费</th>';
+
+            const orderNumbers = data.map(row => row['订单号']);
+            const duplicates = orderNumbers.filter((item, index) => orderNumbers.indexOf(item) !== index);
+
+            let totalNoFeeAmount = 0;
+            let totalNoFeeFee = 0;
+            let totalWithFeeAmount = 0;
+            let totalWithFeeFee = 0;
+            let duplicateAmount = 0;
+            let duplicateFee = 0;
+
+            const uniqueOrderData = [];
+            const seenOrders = new Set();
+
+            data.forEach(row => {
+                const orderNumber = row['订单号'];
+                const amount = row['金额'];
+                const fee = row['手续费'];
+
+                if (!orderNumber || !amount) {
+                    console.warn("数据不完整：", row);
+                    return;
+                }
+
+                if (!seenOrders.has(orderNumber)) {
+                    seenOrders.add(orderNumber);
+                    uniqueOrderData.push(row);
+                }
+            });
+
+            uniqueOrderData.forEach(row => {
+                const orderNumber = row['订单号'];
+                const amount = row['金额'];
+                const fee = row['手续费'];
+                const isDuplicate = duplicates.includes(orderNumber);
+
+                if (isDuplicate) {
+                    const newRow = duplicatesTable.insertRow();
+                    newRow.insertCell().textContent = orderNumber;
+                    newRow.insertCell().textContent = amount;
+                    newRow.insertCell().textContent = fee || 'N/A';
+                    newRow.classList.add('status-duplicate');
+                    
+                    duplicateAmount += amount;
+                    duplicateFee += fee || 0;
+                } else if (fee) {
+                    const newRow = withFeeTable.insertRow();
+                    newRow.insertCell().textContent = orderNumber;
+                    newRow.insertCell().textContent = amount;
+                    newRow.insertCell().textContent = fee || 'N/A';
+                    
+                    totalWithFeeAmount += amount;
+                    totalWithFeeFee += fee || 0;
+                    
+                    const matchingOrder = backendOrders.find(order => order.orderNumber === orderNumber);
+                    if (matchingOrder) {
+                        if (matchingOrder.amount == amount) {
+                            newRow.classList.add('status-matched');
+                        } else {
+                            newRow.classList.add('status-unmatched');
+                        }
+                    } else {
+                        newRow.classList.add('status-unmatched');
+                    }
+                } else {
+                    const newRow = noFeeTable.insertRow();
+                    newRow.insertCell().textContent = orderNumber;
+                    newRow.insertCell().textContent = amount;
+                    
+                    totalNoFeeAmount += amount;
+                    
+                    const matchingOrder = backendOrders.find(order => order.orderNumber === orderNumber);
+                    if (matchingOrder) {
+                        if (matchingOrder.amount == amount) {
+                            newRow.classList.add('status-matched');
+                        } else {
+                            newRow.classList.add('status-unmatched');
+                        }
+                    } else {
+                        newRow.classList.add('status-unmatched');
+                    }
+                }
+            });
+
+            noFeeSummary.innerHTML = `没有手续费的订单总金额: ${totalNoFeeAmount.toFixed(2)} 元`;
+            withFeeSummary.innerHTML = `有手续费的订单总金额: ${totalWithFeeAmount.toFixed(2)} 元<br>有手续费的订单总手续费: ${totalWithFeeFee.toFixed(2)} 元`;
+            duplicatesSummary.innerHTML = `重复订单总金额: ${duplicateAmount.toFixed(2)} 元<br>重复订单总手续费: ${duplicateFee.toFixed(2)} 元`;
+
+            renderFilterOptions(uniqueOrderData);
+        }
+
+        function renderFilterOptions(data) {
+            const filterContainer = document.getElementById('filter-container');
+            const uniqueValues = Array.from(new Set(data.map(row => row['订单号'])));
+            const select = document.createElement('select');
+
+            uniqueValues.forEach(value => {
+                const option = document.createElement('option');
+                option.value = value;
+                option.textContent = value;
+                select.appendChild(option);
+            });
+
+            filterContainer.appendChild(select);
+        }
+    </script>
+</head>
+<body>
+    <div class="container">
+        <div class="sidebar">
+            <h2>总金额信息</h2>
+            <p id="noFeeSummary">没有手续费的订单总金额: 0 元</p>
+            <p id="withFeeSummary">有手续费的订单总金额: 0 元<br>有手续费的订单总手续费: 0 元</p>
+            <p id="duplicatesSummary">重复订单总金额: 0 元<br>重复订单总手续费: 0 元</p>
+        </div>
+        <div class="main-content">
+            <div class="header">
+                <h1>订单匹配结果</h1>
+            </div>
+
+            <div class="filter-container" id="filter-container">
+                <label for="orderFilter">筛选订单号:</label>
+            </div>
+
+            <div class="order-row">
+                <div class="order-table-container">
+                    <div class="table-section">
+                        <h2>没有手续费的订单</h2>
+                        <table class="order-table" id="noFeeTable"></table>
+                    </div>
+                </div>
+                <div class="order-table-container">
+                    <div class="table-section">
+                        <h2>有手续费的订单</h2>
+                        <table class="order-table" id="withFeeTable"></table>
+                    </div>
+                </div>
+                <div class="order-table-container">
+                    <div class="table-section">
+                        <h2>重复订单</h2>
+                        <table class="order-table" id="duplicatesTable"></table>
+                    </div>
+                </div>
+            </div>
+
+            <input type="file" id="fileInput" accept=".xlsx" onchange="handleFile(event)">
+            <a href="#" class="download-button">下载匹配结果</a>
+        </div>
+    </div>
+</body>
+</html>
